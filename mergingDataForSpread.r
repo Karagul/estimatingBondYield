@@ -7,13 +7,32 @@ for(con in all_cons)
 
 #input date you would like to estimate for here
 estimatingDate <- as.Date("2008-03-05")
+curMonth= month(estimatingDate)
+quarter="Q0"
+if(curMonth>=1 && curMonth<=3)
+{
+quarter="Q1"
+}
+if(curMonth>=4 && curMonth<=6)
+{
+quarter="Q2"
+}
+if(curMonth>=7 && curMonth<=9)
+{
+quarter="Q3"
+}
+
+if(curMonth>=10 && curMonth<=12)
+{
+quarter="Q4"
+}
 thirtyDaysPrior <- estimatingDate-30
 debugPrint<-FALSE
 info<-TRUE
 debugPrint2<-FALSE
 limit = ";"
 mydb = dbConnect(MySQL(), user='jch223', password='temp1234', dbname='bond2', host='localhost')
-query <-paste("select * from c2c", format(strptime(estimatingDate, "%Y-%m-%d"),"%Y"),"e", " where yyyymmdd<=", format(strptime(estimatingDate, "%Y-%m-%d"), "%Y%m%d"), " and yyyymmdd>=",format(strptime(thirtyDaysPrior, "%Y-%m-%d"), "%Y%m%d"), limit , sep="")
+query <-paste("select * from c2c", format(strptime(estimatingDate, "%Y-%m-%d"),"%Y"),"e", " where yyyymmdd<=", format(strptime(estimatingDate, "%Y-%m-%d"), "%Y%m%d"), " and yyyymmdd>=",format(strptime(thirtyDaysPrior, "%Y-%m-%d"), "%Y%m%d")," ", limit , sep="")
 if(debugPrint)
 {
 print(query)
@@ -48,6 +67,57 @@ print(paste("Size of Prices after merge with issue information:", nrow(prices)))
 if(debugPrint)
 {
 head(prices, n=10)
+}
+
+query<- paste("select cusip, xintq, niq, dpq from compustatFinal where datacqtr=\"", year(estimatingDate),quarter, "\";", sep="")
+
+print(query)
+compustatData<- dbGetQuery(mydb, query)
+
+if(info)
+{
+print(paste("Length of Compustat Data:", nrow(compustatData)))
+}
+
+compustatData$cusip=substr(compustatData$cusip, 1, 6)
+
+names(compustatData)[which(names(compustatData)=="cusip")]<- "ISSUER_CUSIP"
+
+prices <- merge(prices,compustatData, by=c("ISSUER_CUSIP"))
+
+if(info)
+{
+print(paste("Length of prices after merge with compustat:", nrow(prices)))
+}
+
+
+if(info)
+{
+print(paste("Length of compustatData:", nrow(compustatData)))
+}
+
+query <- paste("select ISSUER_CUSIP, ISSUE_CUSIP, YTW, call_date_worst, trans_dt from accrued_ytw2002_2018  where trans_dt<=", format(strptime(estimatingDate, "%Y-%m-%d"), "%Y%m%d"), " and trans_dt>=",format(strptime(thirtyDaysPrior, "%Y-%m-%d"), "%Y%m%d")," ", limit , sep="")
+
+yieldToWorst <- dbGetQuery(mydb, query)
+
+
+
+prices$ISSUE_CUSIP=substr(prices$ISSUE_CUSIP, 1, 2)
+
+
+head(prices,n=10)
+
+names(yieldToWorst)[which(names(yieldToWorst)=="trans_dt")] = "yyyymmdd"
+
+
+head(yieldToWorst, n=10)
+
+prices <- merge(prices, yieldToWorst, by=c("ISSUER_CUSIP", "ISSUE_CUSIP", "yyyymmdd"))
+
+if(info)
+{
+print(paste("Length of YieldToWorst Query:", nrow(yieldToWorst)))
+print(paste("Length of Prices After merging with yieldToWorst:", nrow(prices)))
 }
 
 query<- "select * from treasuryBondInformation"
@@ -140,6 +210,12 @@ print(paste("Number of Rows of final Table:", nrow(prices)))
 head(prices,n=10)
 print(paste("Bad Data Points:", nrow(badDataPoints)))
 }
+
+maturityDates<-as.Date(as.character(prices$MATURITY), "%Y%m%d")
+currentDates<-as.Date(as.character(prices$yyyymmdd), "%Y%m%d")
+
+timeToMaturity<-maturityDates-currentDates
+prices$timeToMaturity=timeToMaturity
 
 tblName <- "testDateDataForPricing"
 dbWriteTable(mydb, tblName, prices, overwrite=TRUE, append=FALSE)
