@@ -1,0 +1,362 @@
+
+R version 3.4.3 (2017-11-30) -- "Kite-Eating Tree"
+Copyright (C) 2017 The R Foundation for Statistical Computing
+Platform: x86_64-pc-linux-gnu (64-bit)
+
+R is free software and comes with ABSOLUTELY NO WARRANTY.
+You are welcome to redistribute it under certain conditions.
+Type 'license()' or 'licence()' for distribution details.
+
+  Natural language support but running in an English locale
+
+R is a collaborative project with many contributors.
+Type 'contributors()' for more information and
+'citation()' on how to cite R or R packages in publications.
+
+Type 'demo()' for some demos, 'help()' for on-line help, or
+'help.start()' for an HTML browser interface to help.
+Type 'q()' to quit R.
+
+[Previously saved workspace restored]
+
+> library(RMySQL)
+Loading required package: DBI
+> library(EGRET)
+> library(lubridate)
+
+Attaching package: ‘lubridate’
+
+The following object is masked from ‘package:base’:
+
+    date
+
+> all_cons <- dbListConnections(MySQL())
+> for(con in all_cons)
++ 	dbDisconnect(con)
+> 
+> debugPrint<-FALSE
+> info<-TRUE
+> limit = ";"
+> 
+> mydb = dbConnect(MySQL(), user='jch223', password='temp1234', dbname='bond2', host='localhost')
+> 
+> query <- paste("select * from testDateDataForPricing ", limit, sep="")
+> 
+> data <- dbGetQuery(mydb, query)
+> 
+> data$spreadAboveTreasury <- data$Yield-as.numeric(data$treasuryYield)
+> #taking xintq divided by EBITDA and EBIT
+> yindices<-which(data$CALLABLE=="Y")
+> nindices<-which(data$CALLABLE=="N")
+> if(info)
++ {
++ print(paste("number of yindices:", length(yindices), "number of nindices:", length(nindices)))
++ }
+[1] "number of yindices: 1355 number of nindices: 1372"
+> data$CALLABLE[yindices]=1
+> data$CALLABLE[nindices]=0
+> 
+> print(paste("Number of indices where no callable", length(which(data$CALLABLE==0))))
+[1] "Number of indices where no callable 1372"
+> 
+> callableAndAbovePar<-which(data$CALLABLE==1 & data$Clean_Price>=100)
+> notCallableAndAbovePar<-which(!(data$CALLABLE==1 & data$Clean_Price>=100))
+> 
+> data$PAR=data$ISSUER_CUSIP
+> data$PAR[callableAndAbovePar]=1
+> data$PAR[notCallableAndAbovePar]=0
+> #getting rid of all instances where there is no reported niq
+> data$niq=as.numeric(data$niq)
+> data$dpq=as.numeric(data$dpq)
+> data$xintq=as.numeric(data$xintq)
+> data$EBITDA= data$xintq/(data$niq+data$dpq)
+> data$niq=data$xintq/(data$niq)
+> 
+> names(data)[which(names(data)=="niq")]="EBIT"
+> 
+> data$timeToMaturity=as.numeric(data$timeToMaturity)
+> 
+> 
+> 
+> print(paste("Number of indices where no callable", length(which(data$CALLABLE==0))))
+[1] "Number of indices where no callable 1372"
+> print(head(data[which(data$CALLABLE==0),],n=20))
+    row_names ISSUER_CUSIP ISSUE_CUSIP yyyymmdd ISSUER_NUM ISSUE_NUM Bond_Sym
+232       232       060505          AR 20080204     060505        AR   BAC.XQ
+233       233       060505          AR 20080204     060505        AR   BAC.XQ
+234       234       060505          AR 20080205     060505        AR   BAC.XQ
+235       235       060505          AR 20080205     060505        AR   BAC.XQ
+236       236       060505          AR 20080206     060505        AR   BAC.XQ
+237       237       060505          AR 20080206     060505        AR   BAC.XQ
+238       238       060505          AR 20080207     060505        AR   BAC.XQ
+239       239       060505          AR 20080207     060505        AR   BAC.XQ
+240       240       060505          AR 20080208     060505        AR   BAC.XQ
+241       241       060505          AR 20080208     060505        AR   BAC.XQ
+242       242       060505          AR 20080211     060505        AR   BAC.XQ
+243       243       060505          AR 20080211     060505        AR   BAC.XQ
+244       244       060505          AR 20080212     060505        AR   BAC.XQ
+245       245       060505          AR 20080212     060505        AR   BAC.XQ
+246       246       060505          AR 20080213     060505        AR   BAC.XQ
+247       247       060505          AR 20080213     060505        AR   BAC.XQ
+248       248       060505          AR 20080214     060505        AR   BAC.XQ
+249       249       060505          AR 20080214     060505        AR   BAC.XQ
+250       250       060505          AR 20080215     060505        AR   BAC.XQ
+251       251       060505          AR 20080215     060505        AR   BAC.XQ
+    Clean_Price ClosingTradeVol TotalDaysVol TradeCount    High     Low   Yield
+232     102.831        351000.0       581000          8 102.893 101.250 4.19157
+233     102.831        351000.0       581000          8 102.893 101.250 4.19157
+234     102.925         75000.0       245000          5 103.386 102.257 4.16944
+235     102.925         75000.0       245000          5 103.386 102.257 4.16944
+236     102.166         55000.0       153000          6 103.342 101.720 4.34905
+237     102.166         55000.0       153000          6 103.342 101.720 4.34905
+238     102.615        408000.0       711000          6 103.344 102.151 4.24141
+239     102.615        408000.0       711000          6 103.344 102.151 4.24141
+240     102.637      10150000.0     10540000         12 104.010 101.708 4.23586
+241     102.637      10150000.0     10540000         12 104.010 101.708 4.23586
+242     102.410         28000.0       351000         11 103.389 101.820 4.23835
+243     102.410         28000.0       351000         11 103.389 101.820 4.23835
+244     102.104         33000.0      1131000         14 103.901 101.875 4.36290
+245     102.104         33000.0      1131000         14 103.901 101.875 4.36290
+246     103.284         35000.0       975000          8 103.786 102.590 4.08001
+247     103.284         35000.0       975000          8 103.786 102.590 4.08001
+248     102.809        141000.0       271000          6 102.944 102.068 4.19245
+249     102.809        141000.0       271000          6 102.944 102.068 4.19245
+250     102.305         75000.0       191000          7 103.086 102.120 4.31290
+251     102.305         75000.0       191000          7 103.086 102.120 4.31290
+    ISSUE_ID ISSUER_ID MATURITY COUPON_TYPE YANKEE FOREIGN_CURRENCY
+232   149578     33717 20120915           F      N                N
+233   149578     33717 20120915           F      N                N
+234   149578     33717 20120915           F      N                N
+235   149578     33717 20120915           F      N                N
+236   149578     33717 20120915           F      N                N
+237   149578     33717 20120915           F      N                N
+238   149578     33717 20120915           F      N                N
+239   149578     33717 20120915           F      N                N
+240   149578     33717 20120915           F      N                N
+241   149578     33717 20120915           F      N                N
+242   149578     33717 20120915           F      N                N
+243   149578     33717 20120915           F      N                N
+244   149578     33717 20120915           F      N                N
+245   149578     33717 20120915           F      N                N
+246   149578     33717 20120915           F      N                N
+247   149578     33717 20120915           F      N                N
+248   149578     33717 20120915           F      N                N
+249   149578     33717 20120915           F      N                N
+250   149578     33717 20120915           F      N                N
+251   149578     33717 20120915           F      N                N
+    OFFERING_AMT OFFERING_DATE OFFERING_PRICE PUTABLE BOND_TYPE COMPLETE_CUSIP
+232        1e+06      20020919         99.627       N      CDEB      060505AR5
+233        1e+06      20020919         99.627       N      CDEB      060505AR5
+234        1e+06      20020919         99.627       N      CDEB      060505AR5
+235        1e+06      20020919         99.627       N      CDEB      060505AR5
+236        1e+06      20020919         99.627       N      CDEB      060505AR5
+237        1e+06      20020919         99.627       N      CDEB      060505AR5
+238        1e+06      20020919         99.627       N      CDEB      060505AR5
+239        1e+06      20020919         99.627       N      CDEB      060505AR5
+240        1e+06      20020919         99.627       N      CDEB      060505AR5
+241        1e+06      20020919         99.627       N      CDEB      060505AR5
+242        1e+06      20020919         99.627       N      CDEB      060505AR5
+243        1e+06      20020919         99.627       N      CDEB      060505AR5
+244        1e+06      20020919         99.627       N      CDEB      060505AR5
+245        1e+06      20020919         99.627       N      CDEB      060505AR5
+246        1e+06      20020919         99.627       N      CDEB      060505AR5
+247        1e+06      20020919         99.627       N      CDEB      060505AR5
+248        1e+06      20020919         99.627       N      CDEB      060505AR5
+249        1e+06      20020919         99.627       N      CDEB      060505AR5
+250        1e+06      20020919         99.627       N      CDEB      060505AR5
+251        1e+06      20020919         99.627       N      CDEB      060505AR5
+    REASON DATED_DATE FIRST_INTEREST_DATE INTEREST_FREQUENCY COUPON CURRENCY
+232   <NA>   20020925            20030315                  2  4.875     <NA>
+233   <NA>   20020925            20030315                  2  4.875     <NA>
+234   <NA>   20020925            20030315                  2  4.875     <NA>
+235   <NA>   20020925            20030315                  2  4.875     <NA>
+236   <NA>   20020925            20030315                  2  4.875     <NA>
+237   <NA>   20020925            20030315                  2  4.875     <NA>
+238   <NA>   20020925            20030315                  2  4.875     <NA>
+239   <NA>   20020925            20030315                  2  4.875     <NA>
+240   <NA>   20020925            20030315                  2  4.875     <NA>
+241   <NA>   20020925            20030315                  2  4.875     <NA>
+242   <NA>   20020925            20030315                  2  4.875     <NA>
+243   <NA>   20020925            20030315                  2  4.875     <NA>
+244   <NA>   20020925            20030315                  2  4.875     <NA>
+245   <NA>   20020925            20030315                  2  4.875     <NA>
+246   <NA>   20020925            20030315                  2  4.875     <NA>
+247   <NA>   20020925            20030315                  2  4.875     <NA>
+248   <NA>   20020925            20030315                  2  4.875     <NA>
+249   <NA>   20020925            20030315                  2  4.875     <NA>
+250   <NA>   20020925            20030315                  2  4.875     <NA>
+251   <NA>   20020925            20030315                  2  4.875     <NA>
+    SEC_CUSIP INDUSTRY_CODE NAICS_CODE COUNTRY_DOMICILE SIC_CODE xintq EBIT dpq
+232      <NA>            20      52211              USA     6021    NA   NA 774
+233      <NA>            20      52211              USA     6021    NA   NA 774
+234      <NA>            20      52211              USA     6021    NA   NA 774
+235      <NA>            20      52211              USA     6021    NA   NA 774
+236      <NA>            20      52211              USA     6021    NA   NA 774
+237      <NA>            20      52211              USA     6021    NA   NA 774
+238      <NA>            20      52211              USA     6021    NA   NA 774
+239      <NA>            20      52211              USA     6021    NA   NA 774
+240      <NA>            20      52211              USA     6021    NA   NA 774
+241      <NA>            20      52211              USA     6021    NA   NA 774
+242      <NA>            20      52211              USA     6021    NA   NA 774
+243      <NA>            20      52211              USA     6021    NA   NA 774
+244      <NA>            20      52211              USA     6021    NA   NA 774
+245      <NA>            20      52211              USA     6021    NA   NA 774
+246      <NA>            20      52211              USA     6021    NA   NA 774
+247      <NA>            20      52211              USA     6021    NA   NA 774
+248      <NA>            20      52211              USA     6021    NA   NA 774
+249      <NA>            20      52211              USA     6021    NA   NA 774
+250      <NA>            20      52211              USA     6021    NA   NA 774
+251      <NA>            20      52211              USA     6021    NA   NA 774
+    CALLABLE        YTW call_date_worst treasuryYield whichTreasury
+232        0 0.04191651              NA          2.78 5yearMaturity
+233        0 0.04191651              NA          2.78 5yearMaturity
+234        0 0.04169021              NA          2.66 5yearMaturity
+235        0 0.04169021              NA          2.66 5yearMaturity
+236        0 0.04348830              NA          2.67 5yearMaturity
+237        0 0.04348830              NA          2.67 5yearMaturity
+238        0 0.04241309              NA          2.79 5yearMaturity
+239        0 0.04241309              NA          2.79 5yearMaturity
+240        0 0.04235744              NA          2.69 5yearMaturity
+241        0 0.04235744              NA          2.69 5yearMaturity
+242        0 0.04289623              NA          2.67 5yearMaturity
+243        0 0.04289623              NA          2.67 5yearMaturity
+244        0 0.04362660              NA          2.71 5yearMaturity
+245        0 0.04362660              NA          2.71 5yearMaturity
+246        0 0.04079663              NA          2.71 5yearMaturity
+247        0 0.04079663              NA          2.71 5yearMaturity
+248        0 0.04192367              NA          2.81 5yearMaturity
+249        0 0.04192367              NA          2.81 5yearMaturity
+250        0 0.04312781              NA          2.76 5yearMaturity
+251        0 0.04312781              NA          2.76 5yearMaturity
+    timeToMaturity spreadAboveTreasury PAR EBITDA
+232           1685             1.41157   0     NA
+233           1685             1.41157   0     NA
+234           1684             1.50944   0     NA
+235           1684             1.50944   0     NA
+236           1683             1.67905   0     NA
+237           1683             1.67905   0     NA
+238           1682             1.45141   0     NA
+239           1682             1.45141   0     NA
+240           1681             1.54586   0     NA
+241           1681             1.54586   0     NA
+242           1678             1.56835   0     NA
+243           1678             1.56835   0     NA
+244           1677             1.65290   0     NA
+245           1677             1.65290   0     NA
+246           1676             1.37001   0     NA
+247           1676             1.37001   0     NA
+248           1675             1.38245   0     NA
+249           1675             1.38245   0     NA
+250           1674             1.55290   0     NA
+251           1674             1.55290   0     NA
+> data<-data[,c("Clean_Price","PAR","yyyymmdd","CALLABLE","spreadAboveTreasury","timeToMaturity","EBIT","EBITDA","ISSUER_CUSIP","ISSUE_CUSIP","treasuryYield","whichTreasury","MATURITY")]
+> data<-data[complete.cases(data),]
+> print(head(data[,c("PAR", "CALLABLE","timeToMaturity", "EBIT", "EBITDA")], n=20))
+   PAR CALLABLE timeToMaturity      EBIT     EBITDA
+1    0        1           9892 0.4927983 0.26067354
+2    0        1           9892 0.4927983 0.26067354
+3    0        1           9890 0.4927983 0.26067354
+4    0        1           9890 0.4927983 0.26067354
+5    0        1           9886 0.4927983 0.26067354
+6    0        1           9886 0.4927983 0.26067354
+7    0        1           9885 0.4927983 0.26067354
+8    0        1           9885 0.4927983 0.26067354
+9    0        1           9884 0.4927983 0.26067354
+10   0        1           9884 0.4927983 0.26067354
+11   0        1           9873 0.4927983 0.26067354
+12   0        1           9873 0.4927983 0.26067354
+31   0        1          21394 0.0332997 0.02835052
+32   0        1          21394 0.0332997 0.02835052
+33   0        1          21387 0.0332997 0.02835052
+34   0        1          21387 0.0332997 0.02835052
+35   0        1          21386 0.0332997 0.02835052
+36   0        1          21386 0.0332997 0.02835052
+37   0        1          21384 0.0332997 0.02835052
+38   0        1          21384 0.0332997 0.02835052
+> print(paste("Number of indices where no callable", length(which(data$CALLABLE==0))))
+[1] "Number of indices where no callable 1166"
+> coefficients <- lm(spreadAboveTreasury ~ EBITDA + EBIT + timeToMaturity + CALLABLE + PAR , data=data)
+> coefficients
+
+Call:
+lm(formula = spreadAboveTreasury ~ EBITDA + EBIT + timeToMaturity + 
+    CALLABLE + PAR, data = data)
+
+Coefficients:
+   (Intercept)          EBITDA            EBIT  timeToMaturity       CALLABLE1  
+     3.3645300      -0.0533214       0.0694968      -0.0001945       3.1177292  
+          PAR1  
+    -2.0589058  
+
+> 
+> 
+> data$estimates <- data$spreadAboveTreasury 
+> data$estimates <- data$estimates + coefficients$residuals
+> 
+> 
+> if(info)
++ {
++ summary(coefficients)
++ }
+
+Call:
+lm(formula = spreadAboveTreasury ~ EBITDA + EBIT + timeToMaturity + 
+    CALLABLE + PAR, data = data)
+
+Residuals:
+    Min      1Q  Median      3Q     Max 
+-5.2538 -1.3683 -0.4802  0.5627 10.5453 
+
+Coefficients:
+                 Estimate Std. Error t value Pr(>|t|)    
+(Intercept)     3.365e+00  7.987e-02  42.127  < 2e-16 ***
+EBITDA         -5.332e-02  1.227e-02  -4.347 1.44e-05 ***
+EBIT            6.950e-02  4.029e-03  17.249  < 2e-16 ***
+timeToMaturity -1.945e-04  1.047e-05 -18.574  < 2e-16 ***
+CALLABLE1       3.118e+00  1.025e-01  30.403  < 2e-16 ***
+PAR1           -2.059e+00  1.504e-01 -13.687  < 2e-16 ***
+---
+Signif. codes:  0 ‘***’ 0.001 ‘**’ 0.01 ‘*’ 0.05 ‘.’ 0.1 ‘ ’ 1
+
+Residual standard error: 2.161 on 2365 degrees of freedom
+Multiple R-squared:  0.353,	Adjusted R-squared:  0.3517 
+F-statistic: 258.1 on 5 and 2365 DF,  p-value: < 2.2e-16
+
+> 
+> maxIndex= which(coefficients$residuals==max(coefficients$residuals))
+> minIndex= which(coefficients$residuals==min(coefficients$residuals))
+> 
+> if(info)
++ {
++ print(data[maxIndex,])
++ print(data[minIndex,])
++ 
++ }
+    Clean_Price PAR yyyymmdd CALLABLE spreadAboveTreasury timeToMaturity
+522     75.8125   0 20080211        1             16.7936           1189
+523     75.8125   0 20080211        1             16.7936           1189
+          EBIT     EBITDA ISSUER_CUSIP ISSUE_CUSIP treasuryYield whichTreasury
+522 -0.1821543 -0.1872248       07556Q          AE           2.1 3yearMaturity
+523 -0.1821543 -0.1872248       07556Q          AE           2.1 3yearMaturity
+    MATURITY estimates
+522 20110515  27.33893
+523 20110515  27.33893
+     Clean_Price PAR yyyymmdd CALLABLE spreadAboveTreasury timeToMaturity
+1940          94   0 20080204        1             1.15418           1242
+1941          94   0 20080204        1             1.15418           1242
+         EBIT   EBITDA ISSUER_CUSIP ISSUE_CUSIP treasuryYield whichTreasury
+1940 8.292714 7.669648       617446          MK          2.23 3yearMaturity
+1941 8.292714 7.669648       617446          MK          2.23 3yearMaturity
+     MATURITY estimates
+1940 20110630 -4.099639
+1941 20110630 -4.099639
+> 
+> tblName<- "outputFromYieldEstimates"
+> dbWriteTable(mydb, tblName,data, overwrite=TRUE, append=FALSE)
+[1] TRUE
+> dbDisconnect(mydb)
+[1] TRUE
+> 
+> proc.time()
+   user  system elapsed 
+  3.173   0.165   3.580 
