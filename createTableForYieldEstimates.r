@@ -252,6 +252,8 @@ maturityDates<-as.Date(as.character(prices$MATURITY), "%Y%m%d")
 timeToMaturity[which(is.na(prices$call_date_worst))]<-maturityDates[which(is.na(prices$call_date_worst))]-currentDates[which(is.na(prices$call_date_worst))]
 prices$timeToMaturity=timeToMaturity
 
+prices$spreadAboveTreasury <- prices$Yield - as.numeric(prices$treasuryYield)
+
 tblName <- "testDateDataForPricing"
 dbWriteTable(mydb, tblName, prices, overwrite=TRUE, append=FALSE)
 dbDisconnect(mydb)

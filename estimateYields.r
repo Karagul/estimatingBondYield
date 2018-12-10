@@ -6,7 +6,7 @@ for(con in all_cons)
 	dbDisconnect(con)
 
 debugPrint<-FALSE
-info<-TRUE
+info<-FALSE
 limit = ";"
 
 mydb = dbConnect(MySQL(), user='jch223', password='temp1234', dbname='bond2', host='localhost')
@@ -15,7 +15,7 @@ query <- paste("select * from testDateDataForPricing ", limit, sep="")
 
 data <- dbGetQuery(mydb, query)
 
-data$spreadAboveTreasury <- data$Yield-as.numeric(data$treasuryYield)
+#data$spreadAboveTreasury <- data$Yield-as.numeric(data$treasuryYield)
 #taking xintq divided by EBITDA and EBIT
 yindices<-which(data$CALLABLE=="Y")
 nindices<-which(data$CALLABLE=="N")
@@ -26,8 +26,10 @@ print(paste("number of yindices:", length(yindices), "number of nindices:", leng
 data$CALLABLE[yindices]=1
 data$CALLABLE[nindices]=0
 
+if(info)
+{
 print(paste("Number of indices where no callable", length(which(data$CALLABLE==0))))
-
+}
 callableAndAbovePar<-which(data$CALLABLE==1 & data$Clean_Price>=100)
 notCallableAndAbovePar<-which(!(data$CALLABLE==1 & data$Clean_Price>=100))
 
@@ -48,54 +50,81 @@ names(data)[which(names(data)=="NetInterestOverNiq")]="NetInterestOverEBIT"
 data$timeToMaturity=as.numeric(data$timeToMaturity)
 
 
-
+if(info)
+{
 print(paste("Number of indices where no callable", length(which(data$CALLABLE==0))))
 print(head(data[which(data$CALLABLE==0),],n=20))
-data<-data[,c("Clean_Price","PAR","yyyymmdd","CALLABLE","spreadAboveTreasury","timeToMaturity","NetInterestOverEBIT","NetInterestOverEBITDA","ISSUER_CUSIP","ISSUE_CUSIP","treasuryYield","whichTreasury","MATURITY","SIC_CODE")]
+}
+data<-data[,c("Clean_Price","PAR","yyyymmdd","CALLABLE","spreadAboveTreasury","timeToMaturity","NetInterestOverEBIT","NetInterestOverEBITDA","ISSUER_CUSIP","ISSUE_CUSIP","treasuryYield","whichTreasury","MATURITY","SIC_CODE","Yield")]
 data<-data[complete.cases(data),]
+if(info)
+{
 print(head(data[,c("PAR", "CALLABLE","timeToMaturity", "NetInterestOverEBIT", "NetInterestOverEBITDA")], n=20))
 print(paste("Number of indices where no callable", length(which(data$CALLABLE==0))))
+}
 #calculating the average spreadAboveTreasuryForEachSicCode
 sicCodeAverages<- aggregate(data[, c("spreadAboveTreasury")], list(data$SIC_CODE),mean)
+if(info)
+{
 print(sicCodeAverages)
-coefficients <- lm(spreadAboveTreasury ~ NetInterestOverEBITDA + NetInterestOverEBIT + timeToMaturity + CALLABLE + PAR , data=data)
-coefficients
+}
+#seperating set into bonds that have same bond traded in previous 30 days and those that didn't
+
+earliestTradeOfBondOfCertainCusip<-aggregate(data[,c("yyyymmdd")],list(data$ISSUER_CUSIP), min)
+names(earliestTradeOfBondOfCertainCusip)=c("ISSUER_CUSIP", "minTradeDateForCusip")
+data <- merge(data, earliestTradeOfBondOfCertainCusip, by=c("ISSUER_CUSIP"))
+indicesWithBondTradedOfSameCusip <- which(data$yyyymmdd>data$minTradeDateForCusip)
+notIndices <- which(!(data$yyyymmdd>data$minTradeDateForCusip))
+data$group= numeric(length=length(data$ISSUER_CUSIP))
+data$group[notIndices]=1
+data$group[indicesWithBondTradedOfSameCusip]=0
+
+#-----------------------------------------------------------------------------#
+#adding residuals to data 
+
+data$residuals=NA
 
 
+#regression for bonds that do not have bond of same cusip traded in 30 day period
+coefficients <- lm(spreadAboveTreasury ~ NetInterestOverEBITDA + NetInterestOverEBIT + timeToMaturity + CALLABLE + PAR , data=data[notIndices,])
+
+print("coefficients for indices that DO NOT  have same bond traded in 30 day period")
+summary(coefficients)
+
+
+data[notIndices,]$residuals=coefficients$residuals
+
+print(length(coefficients$residuals))
+print(length(data[notIndices,]$residuals))
+
+maxIndex= which(data[notIndices,]$residuals==max(coefficients$residuals))
+minIndex= which(data[notIndices,]$residuals==min(coefficients$residuals))
+
+
+print(data[notIndices,][maxIndex,])
+print(data[notIndices,][minIndex,])
+
+#regression for bonds that do have bond of same cusip traded in 30 day period
+coefficients <- lm(spreadAboveTreasury ~ NetInterestOverEBITDA + NetInterestOverEBIT + timeToMaturity + CALLABLE + PAR , data=data[indicesWithBondTradedOfSameCusip,])
+
+
+print("coefficients for indices that DO have same bond traded in 30 day period")
+
+summary(coefficients)
+
+data[indicesWithBondTradedOfSameCusip,]$residuals=coefficients$residuals
+
+maxIndex= which(data[indicesWithBondTradedOfSameCusip,]$residuals==max(coefficients$residuals))
+minIndex= which(data[indicesWithBondTradedOfSameCusip,]$residuals==min(coefficients$residuals))
+
+
+
+print(data[indicesWithBondTradedOfSameCusip,][maxIndex,])
+print(data[indicesWithBondTradedOfSameCusip,][minIndex,])
+
+#getting the actual estimated spread over treasury and writing it to database
 data$estimates <- data$spreadAboveTreasury 
 data$estimates <- data$estimates + coefficients$residuals
-
-print(paste("Old Residuals: ", var(coefficients$residuals)))
-
-
-if(info)
-{
-summary(coefficients)
-}
-
-maxIndex= which(coefficients$residuals==max(coefficients$residuals))
-minIndex= which(coefficients$residuals==min(coefficients$residuals))
-
-if(info)
-{
-print(data[maxIndex,])
-print(data[minIndex,])
-
-}
-
-#setting estimatedSpreadOverTreasury to spreadOverTreasury of bond issued by SAME COMPANY that was traded in previous 30 days, since there is no need to estimate it, since we have a near perfect estimate
-earliestTradeOfBondOfCertainCusip<-aggregate(data[,c("yyyymmdd")],list(data$ISSUER_CUSIP), min)
-for(i in 1:length(data))
-{
-earliestTradeOfBondThatSharesSameCusip=earliestTradeOfBondOfCertainCusip$x[which(earliestTradeOfBondOfCertainCusip$Group.1 == data$ISSUER_CUSIP[i])]
-
-if(data$yyyymmdd[i]>earliestTradeOfBondThatSharesSameCusip){
-data$estimates[i]= data$spreadAboveTreasury[which((data$ISSUER_CUSIP == data$ISSUER_CUSIP[i])&(data$yyyymmdd==earliestTradeOfBondThatSharesSameCusip))[1]]
-}
-}
- 
-print(paste("New Average Residuals: ", var(data$estimates-data$spreadAboveTreasury)))
-
 
 tblName<- "outputFromYieldEstimates"
 dbWriteTable(mydb, tblName,data, overwrite=TRUE, append=FALSE)
