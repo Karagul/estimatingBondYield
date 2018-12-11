@@ -1,6 +1,7 @@
 library(RMySQL)
 library(EGRET)
 library(lubridate)
+library(plyr)
 all_cons <- dbListConnections(MySQL())
 for(con in all_cons)
 	dbDisconnect(con)
@@ -9,13 +10,19 @@ debugPrint<-FALSE
 info<-FALSE
 limit = ";"
 
+estimatingDate=20080305
+
 mydb = dbConnect(MySQL(), user='jch223', password='temp1234', dbname='bond2', host='localhost')
 
 query <- paste("select * from testDateDataForPricing ", limit, sep="")
 
-data <- dbGetQuery(mydb, query)
+fullThirtyDayPeriod <- dbGetQuery(mydb, query)
 
-#data$spreadAboveTreasury <- data$Yield-as.numeric(data$treasuryYield)
+fullThirtyDayPeriod<-fullThirtyDayPeriod[!duplicated(fullThirtyDayPeriod),]
+#getting only the bonds traded on the estimating date
+priorData<-fullThirtyDayPeriod[which(fullThirtyDayPeriod$yyyymmdd!=estimatingDate),]
+data<-fullThirtyDayPeriod[which(fullThirtyDayPeriod$yyyymmdd==estimatingDate),]
+
 #taking xintq divided by EBITDA and EBIT
 yindices<-which(data$CALLABLE=="Y")
 nindices<-which(data$CALLABLE=="N")
@@ -69,63 +76,58 @@ if(info)
 print(sicCodeAverages)
 }
 #seperating set into bonds that have same bond traded in previous 30 days and those that didn't
-
-earliestTradeOfBondOfCertainCusip<-aggregate(data[,c("yyyymmdd")],list(data$ISSUER_CUSIP), min)
+	#getting min trading date of each bond in 30 day period
+earliestTradeOfBondOfCertainCusip<-aggregate(fullThirtyDayPeriod[,c("yyyymmdd")],list(fullThirtyDayPeriod$ISSUER_CUSIP), min)
 names(earliestTradeOfBondOfCertainCusip)=c("ISSUER_CUSIP", "minTradeDateForCusip")
 data <- merge(data, earliestTradeOfBondOfCertainCusip, by=c("ISSUER_CUSIP"))
 indicesWithBondTradedOfSameCusip <- which(data$yyyymmdd>data$minTradeDateForCusip)
 notIndices <- which(!(data$yyyymmdd>data$minTradeDateForCusip))
-data$group= numeric(length=length(data$ISSUER_CUSIP))
-data$group[notIndices]=1
-data$group[indicesWithBondTradedOfSameCusip]=0
+
+print(paste("Num of bonds with bond traded in prior 30: ", length(indicesWithBondTradedOfSameCusip), " Num of bonds with without bond traded in prior 30: ", length(notIndices)))
 
 #-----------------------------------------------------------------------------#
-#adding residuals to data 
 
-data$residuals=NA
+#---------------------------------------------------------------------------------#
+#pairing up most recent trade to estimating date for each cusip with the spreadOverTreasury for that day
+mostRecentTradeToEstimatingDate<-aggregate(priorData[,c("yyyymmdd")], list(priorData$ISSUER_CUSIP),max)
 
+priorData<-unique(priorData[,c("ISSUER_CUSIP", "yyyymmdd", "spreadAboveTreasury")])
+names(priorData)<- c("ISSUER_CUSIP", "yyyymmdd", "spreadAboveTreasury")
+names(mostRecentTradeToEstimatingDate)=c("ISSUER_CUSIP", "yyyymmdd")
+mostRecentTradeToEstimatingDate<-join(mostRecentTradeToEstimatingDate, priorData, by=c("ISSUER_CUSIP", "yyyymmdd"), type="left", match="first")
 
-#regression for bonds that do not have bond of same cusip traded in 30 day period
-coefficients <- lm(spreadAboveTreasury ~ NetInterestOverEBITDA + NetInterestOverEBIT + timeToMaturity + CALLABLE + PAR , data=data[notIndices,])
-
-print("coefficients for indices that DO NOT  have same bond traded in 30 day period")
-summary(coefficients)
-
-
-data[notIndices,]$residuals=coefficients$residuals
-
-print(length(coefficients$residuals))
-print(length(data[notIndices,]$residuals))
-
-maxIndex= which(data[notIndices,]$residuals==max(coefficients$residuals))
-minIndex= which(data[notIndices,]$residuals==min(coefficients$residuals))
+#---------------------------------------------------------------------------------#
 
 
-print(data[notIndices,][maxIndex,])
-print(data[notIndices,][minIndex,])
+names(mostRecentTradeToEstimatingDate)=c("ISSUER_CUSIP", "yyyymmdd", "prevSpreadAboveTreasury")
+bondsWithPrevTrade=data[indicesWithBondTradedOfSameCusip,]
+bondsWithPrevTrade<-merge(bondsWithPrevTrade, mostRecentTradeToEstimatingDate, by=c("ISSUER_CUSIP"))
 
+bondsWithPrevTrade<-bondsWithPrevTrade[!duplicated(bondsWithPrevTrade),]
+
+print(bondsWithPrevTrade)
 #regression for bonds that do have bond of same cusip traded in 30 day period
-coefficients <- lm(spreadAboveTreasury ~ NetInterestOverEBITDA + NetInterestOverEBIT + timeToMaturity + CALLABLE + PAR , data=data[indicesWithBondTradedOfSameCusip,])
+coefficients <- lm(spreadAboveTreasury ~ NetInterestOverEBITDA + NetInterestOverEBIT + timeToMaturity + CALLABLE + PAR + prevSpreadAboveTreasury, data=bondsWithPrevTrade)
 
 
 print("coefficients for indices that DO have same bond traded in 30 day period")
 
 summary(coefficients)
 
-data[indicesWithBondTradedOfSameCusip,]$residuals=coefficients$residuals
 
-maxIndex= which(data[indicesWithBondTradedOfSameCusip,]$residuals==max(coefficients$residuals))
-minIndex= which(data[indicesWithBondTradedOfSameCusip,]$residuals==min(coefficients$residuals))
-
+maxIndex= which(coefficients$residuals==max(coefficients$residuals))
+minIndex= which(coefficients$residuals==min(coefficients$residuals))
 
 
-print(data[indicesWithBondTradedOfSameCusip,][maxIndex,])
-print(data[indicesWithBondTradedOfSameCusip,][minIndex,])
+
 
 #getting the actual estimated spread over treasury and writing it to database
-data$estimates <- data$spreadAboveTreasury 
-data$estimates <- data$estimates + coefficients$residuals
+bondsWithPrevTrade$estimates <- bondsWithPrevTrade$spreadAboveTreasury 
+bondsWithPrevTrade$estimates <- bondsWithPrevTrade$estimates + coefficients$residuals
+
+print(bondsWithPrevTrade[maxIndex,])
+print(bondsWithPrevTrade[minIndex,])
 
 tblName<- "outputFromYieldEstimates"
-dbWriteTable(mydb, tblName,data, overwrite=TRUE, append=FALSE)
+dbWriteTable(mydb, tblName,bondsWithPrevTrade, overwrite=TRUE, append=FALSE)
 dbDisconnect(mydb)
