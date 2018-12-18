@@ -10,19 +10,40 @@ debugPrint<-FALSE
 info<-FALSE
 limit = ";"
 
-estimatingDate=20080305
+
+startDate<-as.Date("2011-01-01")
+endDate<-as.Date("2011-12-31") 
+
 
 mydb = dbConnect(MySQL(), user='jch223', password='temp1234', dbname='bond2', host='localhost')
 
 query <- paste("select * from testDateDataForPricing ", limit, sep="")
 
-fullThirtyDayPeriod <- dbGetQuery(mydb, query)
+entireYearOfData <- dbGetQuery(mydb, query)
+entireYearOfData<- entireYearOfData[!duplicated(entireYearOfData),]
+print(paste("Length of entire year of data: ", length(entireYearOfData$yyyymmdd)))
+createTable=1
+entireYearOfData$yyyymmdd=as.numeric(entireYearOfData$yyyymmdd)
+print(entireYearOfData$yyyymmdd)
+while(startDate<=endDate)
+{
 
-fullThirtyDayPeriod<-fullThirtyDayPeriod[!duplicated(fullThirtyDayPeriod),]
+estimatingDate=startDate
+thirtyDaysBefore=estimatingDate-30
+estimatingDate=as.numeric(format(strptime(estimatingDate, "%Y-%m-%d"), "%Y%m%d"))
+thirtyDaysBefore=as.numeric(format(strptime(thirtyDaysBefore, "%Y-%m-%d"), "%Y%m%d"))
+
+indicesThatFitCriteria=which(entireYearOfData$yyyymmdd<=estimatingDate & entireYearOfData$yyyymmdd>=thirtyDaysBefore)
+fullThirtyDayPeriod<-entireYearOfData[indicesThatFitCriteria,]
 #getting only the bonds traded on the estimating date
 priorData<-fullThirtyDayPeriod[which(fullThirtyDayPeriod$yyyymmdd!=estimatingDate),]
 data<-fullThirtyDayPeriod[which(fullThirtyDayPeriod$yyyymmdd==estimatingDate),]
 
+print(paste("Date: ",estimatingDate , " 30 Day Period: " , length(fullThirtyDayPeriod$yyyymmdd), " Estimating date: ", length(data$yyyymmdd)))
+
+
+if(length(data$yyyymmdd)>0)
+{
 #taking xintq divided by EBITDA and EBIT
 yindices<-which(data$CALLABLE=="Y")
 nindices<-which(data$CALLABLE=="N")
@@ -63,7 +84,11 @@ print(paste("Number of indices where no callable", length(which(data$CALLABLE==0
 print(head(data[which(data$CALLABLE==0),],n=20))
 }
 data<-data[,c("Clean_Price","PAR","yyyymmdd","CALLABLE","spreadAboveTreasury","timeToMaturity","NetInterestOverEBIT","NetInterestOverEBITDA","ISSUER_CUSIP","ISSUE_CUSIP","treasuryYield","whichTreasury","MATURITY","SIC_CODE","Yield")]
+
 data<-data[complete.cases(data),]
+#checking to make sure there is anything in data set after checking for complete cases
+if(length(data$yyyymmdd)>0)
+{
 if(info)
 {
 print(head(data[,c("PAR", "CALLABLE","timeToMaturity", "NetInterestOverEBIT", "NetInterestOverEBITDA")], n=20))
@@ -83,7 +108,7 @@ data <- merge(data, earliestTradeOfBondOfCertainCusip, by=c("ISSUER_CUSIP"))
 indicesWithBondTradedOfSameCusip <- which(data$yyyymmdd>data$minTradeDateForCusip)
 notIndices <- which(!(data$yyyymmdd>data$minTradeDateForCusip))
 
-print(paste("Num of bonds with bond traded in prior 30: ", length(indicesWithBondTradedOfSameCusip), " Num of bonds with without bond traded in prior 30: ", length(notIndices)))
+print(paste("Date, ", estimatingDate , " : With bond in prior 30: ", length(indicesWithBondTradedOfSameCusip), " Without bond traded in prior 30: ", length(notIndices)))
 
 #-----------------------------------------------------------------------------#
 
@@ -105,29 +130,26 @@ bondsWithPrevTrade<-merge(bondsWithPrevTrade, mostRecentTradeToEstimatingDate, b
 
 bondsWithPrevTrade<-bondsWithPrevTrade[!duplicated(bondsWithPrevTrade),]
 
-print(bondsWithPrevTrade)
 #regression for bonds that do have bond of same cusip traded in 30 day period
 coefficients <- lm(spreadAboveTreasury ~ NetInterestOverEBITDA + NetInterestOverEBIT + timeToMaturity + CALLABLE + PAR + prevSpreadAboveTreasury, data=bondsWithPrevTrade)
-
-
-print("coefficients for indices that DO have same bond traded in 30 day period")
-
-summary(coefficients)
-
-
-maxIndex= which(coefficients$residuals==max(coefficients$residuals))
-minIndex= which(coefficients$residuals==min(coefficients$residuals))
-
-
-
-
+write( append(quantile(coefficients$residuals), estimatingDate, after=5), file="residualDistribution", ncolumns=6 , append=TRUE)
 #getting the actual estimated spread over treasury and writing it to database
 bondsWithPrevTrade$estimates <- bondsWithPrevTrade$spreadAboveTreasury 
+print(paste("prevTrade: ", length(bondsWithPrevTrade$estimates), " coefficients ", length(coefficients$residuals)))
 bondsWithPrevTrade$estimates <- bondsWithPrevTrade$estimates + coefficients$residuals
 
-print(bondsWithPrevTrade[maxIndex,])
-print(bondsWithPrevTrade[minIndex,])
-
 tblName<- "outputFromYieldEstimates"
+if(createTable==1)
+{
 dbWriteTable(mydb, tblName,bondsWithPrevTrade, overwrite=TRUE, append=FALSE)
+createTable=0
+}
+else
+{
+dbWriteTable(mydb,tblName, bondsWithPrevTrade, overwrite=FALSE, append=TRUE)
+}
+}
+}
+startDate<-startDate + 1
+}
 dbDisconnect(mydb)

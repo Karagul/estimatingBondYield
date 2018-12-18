@@ -7,35 +7,17 @@ for(con in all_cons)
 	dbDisconnect(con)
 debugPrint4<-FALSE
 #input date you would like to estimate for here
-estimatingDate <- as.Date("2008-03-05")
-curMonth= month(estimatingDate)
+startDate <- as.Date("2011-01-01")
+nextYear = year(startDate)+1
 #determining which calendar quartaer the date falls in
-quarter="Q0"
-if(curMonth>=1 && curMonth<=3)
-{
-quarter="Q1"
-}
-if(curMonth>=4 && curMonth<=6)
-{
-quarter="Q2"
-}
-if(curMonth>=7 && curMonth<=9)
-{
-quarter="Q3"
-}
-
-if(curMonth>=10 && curMonth<=12)
-{
-quarter="Q4"
-}
-thirtyDaysPrior <- estimatingDate-30
+thirtyDaysPrior <- startDate-30
 debugPrint<-FALSE
 info<-TRUE
 debugPrint2<-FALSE
-limit = ";"
+limit = " ;"
 mydb = dbConnect(MySQL(), user='jch223', password='temp1234', dbname='bond2', host='localhost')
 #query for getting trades from the C2C tables
-query <-paste("select * from c2c", format(strptime(estimatingDate, "%Y-%m-%d"),"%Y"),"e", " where yyyymmdd<=", format(strptime(estimatingDate, "%Y-%m-%d"), "%Y%m%d"), " and yyyymmdd>=",format(strptime(thirtyDaysPrior, "%Y-%m-%d"), "%Y%m%d")," ", limit , sep="")
+query <-paste("select * from c2c2002_201803 where yyyymmdd<=", nextYear, "0101 and yyyymmdd>=",format(strptime(thirtyDaysPrior, "%Y-%m-%d"), "%Y%m%d")," ", limit , sep="")
 if(debugPrint)
 {
 print(query)
@@ -51,9 +33,8 @@ if(info)
 print(paste("Original Size of Prices:", nrow(prices)))
 }
 #breaking up CUSIP into ISSUE_CUSIP and ISSUER_CUSIP
-names(prices)[names(prices)=="Cusip"]= "ISSUER_CUSIP"
-prices$ISSUE_CUSIP=substring(prices$ISSUER_CUSIP, 7, 9)
-prices$ISSUER_CUSIP=substring(prices$ISSUER_CUSIP, 1, 6)
+prices$ISSUE_CUSIP=substring(prices$Cusip, 7, 9)
+#prices$ISSUER_CUSIP=substring(prices$ISSUER_CUSIP, 1, 6)
 if(debugPrint)
 {
 head(prices, n=10)
@@ -61,8 +42,15 @@ head(prices, n=10)
 #query for getting maturity dates for bonds from Issue_Information table
 query<-"SELECT * FROM Issue_Information_1980_201803 WHERE COUNTRY_DOMICILE = 'USA' AND FOREIGN_CURRENCY = 'N' AND BOND_TYPE NOT IN ('PSTK', 'PS','EMTN','MBS', 'TPCS', 'CCOV') AND INTEREST_FREQUENCY = 2 AND (PUTABLE <> 'Y' OR PUTABLE IS NULL) AND INDUSTRY_CODE<40 AND OFFERING_PRICE<101 AND OFFERING_PRICE>99 AND OFFERING_AMT>0 AND OFFERING_DATE IS NOT NULL"
 issueInformation <- dbGetQuery(mydb, query)
+if(debugPrint)
+{
+head(issueInformation, n=10)
+}
+names(prices)
+names(issueInformation)
 
-prices<-merge(prices,issueInformation, by=c("ISSUER_CUSIP", "ISSUE_CUSIP"))
+
+prices<-merge(issueInformation, prices,  by.x=c("ISSUER_CUSIP", "ISSUE_CUSIP"), by.y=c("ISSUER_CUSIP","ISSUE_CUSIP"))
 if(info)
 {
 print(paste("Size of Prices after merge with issue information:", nrow(prices)))
@@ -71,8 +59,9 @@ if(debugPrint)
 {
 head(prices, n=10)
 }
-#query for getting company information (ie: net income) from compustatFinal table
-query<- paste("select cusip, xintq, niq, dpq from compustatFinal where datacqtr=\"", year(estimatingDate),quarter, "\";", sep="")
+#query for getting company information (ie: net income) from compustatFinal table, getting all for this year, and only Q4 for the previous year, since we have to match the prior 30 days we are taking 
+query<- paste("select cusip, xintq, niq, dpq, datacqtr from compustatFinal where substring(datacqtr,1,4)=\'",nextYear-1, "\' or datacqtr=\'",nextYear-2, "Q4\' ", limit,  sep="")
+
 
 print(query)
 compustatData<- dbGetQuery(mydb, query)
@@ -85,8 +74,33 @@ print(paste("Length of Compustat Data:", nrow(compustatData)))
 compustatData$cusip=substr(compustatData$cusip, 1, 6)
 
 names(compustatData)[which(names(compustatData)=="cusip")]<- "ISSUER_CUSIP"
+#associating each trading date with a calendar quarter
 
-prices <- merge(prices,compustatData, by=c("ISSUER_CUSIP"))
+quartersForMerging<-data.frame(month=character(12), quarter=character(12))
+quartersForMerging$month<- c('01','02','03','04','05','06','07','08','09','10','11','12')
+quartersForMerging$quarter<- c('Q1','Q1','Q1','Q2','Q2','Q2','Q3','Q3','Q3','Q4','Q4','Q4')
+prices$month=  sprintf("%02d", floor(prices$yyyymmdd/100)%%100)
+
+if(1)
+{
+head(prices[which(prices$yyyymmdd<20100101),], n=10)
+}
+prices$year= floor(prices$yyyymmdd/10000)
+
+if(debugPrint)
+{
+head(prices, n=10)
+}
+prices=merge(prices,quartersForMerging, by=c("month"))
+prices$datacqtr= paste(prices$year, prices$quarter, sep="")
+
+if(1)
+{
+head(prices[which(prices$yyyymmdd<20100101),], n=10)
+}
+
+prices <- merge(prices,compustatData, by=c("ISSUER_CUSIP","datacqtr"))
+
 
 if(info)
 {
@@ -100,7 +114,7 @@ print(paste("Length of compustatData:", nrow(compustatData)))
 }
 
 #query for getting info such as if bond is callable, and the call date that would produce worst yield from accrued_ytw table
-query <- paste("select ISSUER_CUSIP, ISSUE_CUSIP, CALLABLE, YTW, call_date_worst, trans_dt from accrued_ytw2002_2018  where trans_dt<=", format(strptime(estimatingDate, "%Y-%m-%d"), "%Y%m%d"), " and trans_dt>=",format(strptime(thirtyDaysPrior, "%Y-%m-%d"), "%Y%m%d")," ", limit , sep="")
+query <- paste("select ISSUER_CUSIP, ISSUE_CUSIP, CALLABLE, YTW, call_date_worst, trans_dt from accrued_ytw2002_2018  where trans_dt<=", nextYear, "0101 and trans_dt>=",format(strptime(thirtyDaysPrior, "%Y-%m-%d"), "%Y%m%d")," ", limit , sep="")
 
 yieldToWorst <- dbGetQuery(mydb, query)
 
@@ -191,7 +205,7 @@ for(i in 1:length(prices$MATURITY))
 		curLowDifference=abs(maturity-as.numeric(treasuryInfoForDay[lowestIndex]))
 		curDifference=abs(maturity-as.numeric(treasuryInfoForDay[x]))
 		
-		print(paste("Lowest Index:", lowestIndex, "curIndex:", x, "\ncurrentLowestIndex:", curLowDifference, "curDifference:", curDifference))
+		#print(paste("Lowest Index:", lowestIndex, "curIndex:", x, "\ncurrentLowestIndex:", curLowDifference, "curDifference:", curDifference))
 		
 		isNull=FALSE
 		#have to make sure a yield was actually posted for treasury bond
@@ -257,7 +271,6 @@ prices$spreadAboveTreasury <- prices$Yield - as.numeric(prices$treasuryYield)
 tblName <- "testDateDataForPricing"
 dbWriteTable(mydb, tblName, prices, overwrite=TRUE, append=FALSE)
 dbDisconnect(mydb)
-
 
 
 
